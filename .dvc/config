@@ -1,7 +1,0 @@
-[core]
-    remote = ssh-storage
-['remote "ssh-storage"']
-    url = ssh://116.47.188.227/home/jeff/dvc-data
-    user = jeff
-    port = 10024
-    keyfile = id_ed25519
