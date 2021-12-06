@@ -3,6 +3,8 @@
 
 train: ../tutorial_folder/train/images
 val: ../tutorial_folder/valid/images
+# test: ../tutorial_folder/test/images
+
 test: ./plastic_data/test/images
 # number of classes
 nc: 4

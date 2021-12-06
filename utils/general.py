@@ -363,6 +363,7 @@ def check_dataset(data, autodownload=True):
     if 'names' not in data:
         data['names'] = [f'class{i}' for i in range(data['nc'])]  # assign class names if missing
     train, val, test, s = (data.get(x) for x in ('train', 'val', 'test', 'download'))
+    
     if val:
         val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
         if not all(x.exists() for x in val):
@@ -384,7 +385,8 @@ def check_dataset(data, autodownload=True):
                     r = exec(s, {'yaml': data})  # return None
                 print(f"Dataset autodownload {f'success, saved to {root}' if r in (0, None) else 'failure'}\n")
             else:
-                raise Exception('Dataset not found.')
+#                 raise Exception('Dataset not found.')
+                pass
 
     return data  # dictionary
 
