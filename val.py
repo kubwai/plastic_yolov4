@@ -12,6 +12,7 @@ import os
 import sys
 from pathlib import Path
 from threading import Thread
+import pdb
 
 import numpy as np
 import torch
@@ -27,12 +28,12 @@ from models.experimental import attempt_load
 from utils.datasets import create_dataloader
 from utils.general import box_iou, coco80_to_coco91_class, colorstr, check_dataset, check_img_size, \
     check_requirements, check_suffix, check_yaml, increment_path, non_max_suppression, print_args, scale_coords, \
-    xyxy2xywh, xywh2xyxy, LOGGER
-from utils.metrics import ap_per_class, ConfusionMatrix
+    xyxy2xywh, xywh2xyxy, LOGGER, nms_custom
+from utils.metrics import ap_per_class, ConfusionMatrix, map_custom
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, time_sync
 from utils.callbacks import Callbacks
-
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -114,7 +115,7 @@ def run(data,
 
     else:  # called directly
         device = select_device(device, batch_size=batch_size)
-
+       
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
@@ -126,9 +127,10 @@ def run(data,
         imgsz = check_img_size(imgsz, s=gs)  # check image size
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
-        # if device.type != 'cpu' and torch.cuda.device_count() > 1:
-        #     model = nn.DataParallel(model)
-
+#         if device.type != 'cpu' and torch.cuda.device_count() > 1:
+#             model = torch.nn.DataParallel(model, device_ids=[0,1,2,3])
+        
+        
         # Data
         data = check_dataset(data)  # check
 
@@ -138,6 +140,7 @@ def run(data,
 
     # Configure
     model.eval()
+    
     is_coco = isinstance(data.get('val'), str) and data['val'].endswith('coco/val2017.txt')  # COCO dataset
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
@@ -160,7 +163,14 @@ def run(data,
     dt, p, r, f1, mp, mr, map50, map = [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
+    
+    
+    cus_out_list = []
+    cus_target_list = []
+    img_id_list = []
+    
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
+        
         t1 = time_sync()
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -177,18 +187,51 @@ def run(data,
         # Compute loss
         if compute_loss:
             loss += compute_loss([x.float() for x in train_out], targets)[1]  # box, obj, cls
-
+        
         # Run NMS
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+        
+         
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
+        
+        
+        
+
+        ###### 검증 코드 ######
+#         copyed_target = targets.clone().detach()
+#         alpha = batch_size * batch_i
+        
+#         # mAP를 계산하기 전에 0.001이라는 낮은 conf_thres로 nms를 수행하는 이유는 YOLO특성상 모든 gridcell에 무조건 예측 박스가 있기 때문에 이것들을 제거해주고(iou thres)
+#         # 더하여 시간단축을(conf_thres) 위함
+        
+#         cus_out = nms_custom(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls, alpha=alpha)
+#         cus_out = np.concatenate(cus_out).tolist()
+        
+      
+#         copyed_target[:, 0] = copyed_target[:, 0] + alpha
+#         cus_target = torch.cat([copyed_target[:, :2], xywh2xyxy(copyed_target[:, 2:])], dim=1).cpu().tolist()
+        
+#         cus_out_list.append(cus_out)
+#         cus_target_list.append(cus_target)
+        
+#         img_id_list.append([p.split('/')[-1] for p in paths])
+        ##########################
+
+            
+            
         out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
         dt[2] += time_sync() - t3
-
+        
+        
+        
+        
         # Statistics per image
-        for si, pred in enumerate(out):
+        for si, pred in enumerate(out):  # 이미지 한장에 대한 예측정보
+            
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
+            
             tcls = labels[:, 0].tolist() if nl else []  # target class
             path, shape = Path(paths[si]), shapes[si][0]
             seen += 1
@@ -214,6 +257,7 @@ def run(data,
                     confusion_matrix.process_batch(predn, labelsn)
             else:
                 correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool)
+                
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))  # (correct, conf, pcls, tcls)
 
             # Save/log
@@ -231,6 +275,23 @@ def run(data,
             Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
     # Compute statistics
+    
+    
+    
+  
+    
+    
+#     cus_target = np.concatenate(cus_target_list).tolist()
+#     cus_out = np.concatenate(cus_out_list).tolist()
+#     img_id = np.concatenate(img_id_list).tolist()
+#     out_img_id = [img_id[int(o[0])] for o in cus_out]  # 각 이미지의 index를 보고 해당 박스의 이미지이름을 지정하기 위해
+    
+    
+#     cus_map = map_custom(cus_out, cus_target, iou_threshold=0.5, box_format='corners', num_classes=4, img_ids = img_id)
+    
+    
+    
+    
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     if len(stats) and stats[0].any():
         p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
@@ -303,8 +364,8 @@ def parse_opt():
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=32, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')  # mAP계산할때 confidence threshold를 주지 않지만 속도를 위해 작은 값을 준 것임
+    parser.add_argument('--iou-thres', type=float, default=0.5, help='NMS IoU threshold')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')

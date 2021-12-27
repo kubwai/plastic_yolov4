@@ -6,16 +6,139 @@ Model validation metrics
 import math
 import warnings
 from pathlib import Path
+import pandas as pd
+import pdb
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
+from collections import Counter
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
     w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
     return (x[:, :4] * w).sum(1)
+
+
+
+def map_custom(pred_boxes, true_boxes, iou_threshold=0.5, box_format='corners', num_classes=4, img_ids=None):
+    # pred_boxes (list):  [[train_idx(image_num), class_pred, prob_score, x1, y1, x2, y2], ...]
+    average_precisions = [] # 각 클래스별로 AP가 추가될 리스트
+    epsilon = 1e-6 # stability numeric
+    
+    main_df = pd.DataFrame(columns=['No.', 'Data ID', 'Class - Ground Truth', 'Class - Predict', 'Confidence level', 'Confusion matrix', '누적 TP', '누적 FP', 'Precision', 'Recall'])
+    
+    classes = ['pet', 'ps', 'pp', 'pe']
+    confusion_matrix = {0: 'FP', 1: 'TP'}
+    
+    for c in range(num_classes):
+        detections = [] # 각 클래스의 detection이 담길 리스트
+        ground_truths = [] # 각 클래스의 ground truth가 담길 리스트
+        
+        for detection in pred_boxes:
+            if detection[1] == c:
+                detections.append(detection)
+                
+        for true_box in true_boxes: 
+            if true_box[1] == c:
+                ground_truths.append(true_box)
+                
+        # img 0 has 3 bboxes
+        # img 1 has 5 bboxes
+        # amount_bboxes = Counter({0.0: tensor([1., 1., 1.])})
+        amount_bboxes = Counter(gt[0] for gt in ground_truths) # gt의 각 이미지(key)의 개수(value)를 셈
+        
+        for key, val in amount_bboxes.items():
+            amount_bboxes[key] = torch.zeros(val) # 개수를 1차원 tensor로 변환
+        # amount_boxes = {0: torch.tensor([0,0,0]), 1:torch.tensor([0,0,0,0,0])}
+                
+        
+        detections.sort(key=lambda x: x[2], reverse=True) # detections의 confidence가 높은 순으로 정렬
+        TP = torch.zeros((len(detections))) # detections 개수만큼 1차원 TP tensor를 초기화
+        FP = torch.zeros((len(detections))) # 마찬가지로 1차원 FP tensor 초기화
+        total_true_bboxes = len(ground_truths) # recall의 TP+FN으로 사용됨
+        
+        
+        
+        
+        for detection_idx, detection in enumerate(detections): # 정렬한 detections를 하나씩 뽑음
+            
+            # ground_truth_img : detection과 같은 이미지의 ground truth bbox들을 가져옴
+            ground_truth_img = [bbox for bbox in ground_truths if bbox[0] == detection[0]]         
+            best_iou = 0 # 초기화
+            
+            for idx, gt in enumerate(ground_truth_img): # 현재 detection box를 이미지의 ground truth들과 비교
+                iou = box_iou(
+                        torch.Tensor(detection[3:]).view(1,-1),
+                        torch.Tensor(gt[2:]).view(1,-1))
+                
+                if iou > best_iou: #ground truth들과의 iou중 가장 높은놈의 iou를 저장
+                    best_iou = iou
+                    best_gt_idx = idx # 인덱스도 저장
+            
+            if best_iou > iou_threshold: # 그 iou가 0.5 이상이면 헤당 인덱스에 TP = 1 저장, 이하면 FP = 1 저장 
+                if amount_bboxes[detection[0]][best_gt_idx] == 0:
+                    TP[detection_idx] = 1
+                    amount_bboxes[detection[0]][best_gt_idx] = 1
+                else:
+                    FP[detection_idx] = 1 # 이미 해당 물체를 detect한 물체가 있다면 즉 인덱스 자리에 이미 TP가 1이라면 FP=1적용
+            else:
+                FP[detection_idx] = 1
+            
+        # [1, 1, 0, 1, 0] -> [1, 2, 2, 3, 3]
+        
+       
+        
+        TP_cumsum = torch.cumsum(TP, dim=0)
+        FP_cumsum = torch.cumsum(FP, dim=0)
+        recalls = TP_cumsum / (total_true_bboxes + epsilon)
+        precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon)) # TP_cumsum + FP_cumsum을 하면 1씩 증가하게됨
+        
+        df = pd.DataFrame(columns=['No.', 'Data ID', 'Class - Ground Truth', 'Class - Predict', 'Confidence level', 'Confusion matrix', '누적 TP', '누적 FP', 'Precision', 'Recall'])
+        
+        df['Data ID'] = np.array([img_ids[int(d[0])] for d in detections])
+        
+        df['No.'] = np.arange(len(TP))+1
+        
+        # 지정해 두었던 이미지 인덱스값으로 detection하고있는 이미지의 gt를가져온 것 뿐임. 사실 이 metric은 이미지 안에 여러 
+        gt_list = []
+        detect_idx = [int(i[0]) for i in detections]
+        for de in detections:
+            for gr in true_boxes:
+                if int(gr[0]) == int(de[0]):
+                    gt_list.append(classes[int(gr[1])])
+                    break
+        
+#         pdb.set_trace()
+#         df['Class - Ground Truth'] = classes[c]
+
+        df['Class - Ground Truth'] = np.array(gt_list)
+        df['Class - Predict'] = np.array(detections)[:, 1].astype(int)
+        df['Class - Predict'] = np.array([classes[g] for g in df['Class - Predict']])
+        
+        df['Confidence level'] = np.array(detections)[:, 2]
+        
+        df['Confusion matrix'] = np.array([confusion_matrix[int(t)] for t in TP])  # 여기부터
+        df['누적 TP'] = np.array(TP_cumsum)
+        df['누적 FP'] = np.array(FP_cumsum)
+        df['Precision'] = precisions
+        df['Recall'] = recalls
+        
+        main_df = pd.concat([main_df, df])
+        
+        
+        recalls = torch.cat((torch.tensor([0]), recalls)) # x축의 시작은 0 이므로 맨앞에 0추가
+        precisions = torch.cat((torch.tensor([1]), precisions)) # y축의 시작은 1 이므로 맨앞에 1 추가
+        average_precisions.append(torch.trapz(precisions, recalls)) # 현재 클래스에 대해 AP를 계산해줌
+        
+        
+        
+        
+    main_df.to_csv('metric.csv', index=False)    
+        
+    return sum(average_precisions) / len(average_precisions) # MAP
+
+
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=()):
@@ -31,7 +154,6 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     # Returns
         The average precision as computed in py-faster-rcnn.
     """
-
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -54,7 +176,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
             # Accumulate FPs and TPs
             fpc = (1 - tp[i]).cumsum(0)
             tpc = tp[i].cumsum(0)
-
+            
             # Recall
             recall = tpc / (n_l + 1e-16)  # recall curve
             r[ci] = np.interp(-px, -conf[i], recall[:, 0], left=0)  # negative x, xp because xp decreases
@@ -62,7 +184,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
             # Precision
             precision = tpc / (tpc + fpc)  # precision curve
             p[ci] = np.interp(-px, -conf[i], precision[:, 0], left=1)  # p at pr_score
-
+            
+    
             # AP from recall-precision curve
             for j in range(tp.shape[1]):
                 ap[ci, j], mpre, mrec = compute_ap(recall[:, j], precision[:, j])
@@ -80,6 +203,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         plot_mc_curve(px, r, Path(save_dir) / 'R_curve.png', names, ylabel='Recall')
 
     i = f1.mean(0).argmax()  # max F1 index
+    
     return p[:, i], r[:, i], ap, f1[:, i], unique_classes.astype('int32')
 
 
