@@ -109,6 +109,8 @@ def create_dataloader(path, imgsz, batch_size, stride, single_cls=False, hyp=Non
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, workers])  # number of workers
+#     nw = 0
+    
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
@@ -370,7 +372,7 @@ class LoadStreams:
 def img2label_paths(img_paths):
     # Define label paths as a function of image paths
 #     sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
-    sa, sb = os.sep + 'image' + os.sep, os.sep + 'annotation' + os.sep + 'yolov4' + os.sep
+    sa, sb = os.sep + 'images' + os.sep, os.sep + 'annotations' + os.sep + 'yolov4' + os.sep
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
 
