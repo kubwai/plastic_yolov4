@@ -416,8 +416,19 @@ def main(opt):
 
 
 if __name__ == "__main__":
+    import datetime as dt
+    from dateutil.tz import gettz
+
+
+    start = dt.datetime.now(gettz('Asia/Seoul'))
+    print(f'시작시간: {start.isoformat()}')
+    
     opt = parse_opt()
     main(opt)
+    
+    end = dt.datetime.now(gettz('Asia/Seoul'))
+    print(f'종료시간: {end.isoformat()}')
+    
 
 
 
