@@ -1,11 +1,11 @@
 # train and val datasets (image directory or *.txt file with image paths)
 # utils/datasets.py 에서 img2label_paths 함수 수정하였음.
 
-train: ../preprocessed_dataset/Train/images
+train: ../preprocessed_dataset/Test/images
 
 val: ../preprocessed_dataset/Validation/images
 
-# test: ../preprocessed_dataset/Test/images
+# test: ../result_format/preprocessed_dataset/images
 
 # docker
 test: /root/preprocessed_dataset/images

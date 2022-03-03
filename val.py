@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from threading import Thread
 import pdb
-
+import shutil
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -225,7 +225,6 @@ def run(data,
         
         
         
-        
         # Statistics per image
         for si, pred in enumerate(out):  # 이미지 한장에 대한 예측정보
             
@@ -425,9 +424,10 @@ if __name__ == "__main__":
     
     opt = parse_opt()
     main(opt)
-    
+    shutil.move("runs/val/yolov4/best_predictions.json","/root/yolov4_test-results.json")
     end = dt.datetime.now(gettz('Asia/Seoul'))
     print(f'종료시간: {end.isoformat()}')
+    
     
 
 
