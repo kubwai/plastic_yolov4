@@ -424,7 +424,7 @@ if __name__ == "__main__":
     
     opt = parse_opt()
     main(opt)
-    shutil.move("runs/val/yolov4/best_predictions.json","/root/yolov4_test-results.json")
+    shutil.move("runs/val/yolov4/yolov4_predictions.json","/root/yolov4_test-results.json")
     end = dt.datetime.now(gettz('Asia/Seoul'))
     print(f'종료시간: {end.isoformat()}')
     
